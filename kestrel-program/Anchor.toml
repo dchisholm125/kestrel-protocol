@@ -1,0 +1,12 @@
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[programs.localnet]
+kestrel = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+
+[programs.devnet]
+kestrel = "3TaXEUn24hw4SncGP9aFskwSqsbhaZod14QEX2akLFxg"
+
+[toolchain]
+anchor_version = "0.31.0"
