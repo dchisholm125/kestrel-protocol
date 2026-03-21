@@ -1,0 +1,19 @@
+{
+  "name": "kestrel-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "kestrel:init:mainnet": "ts-node --project backend/tsconfig.json backend/src/kestrel/initMainnet.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/web3.js": "^1.98.2",
+    "bn.js": "^5.2.1",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

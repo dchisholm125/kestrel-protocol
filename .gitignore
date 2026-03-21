@@ -5,6 +5,11 @@ coverage/
 .nyc_output/
 *.tsbuildinfo
 
+# Coding Assistant files
+GEMINI.md
+CLAUDE.md
+AGENTS.md
+
 # Environment / local secrets
 .env
 .env.local

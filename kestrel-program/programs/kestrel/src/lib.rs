@@ -48,9 +48,15 @@ pub struct ProfitWithdrawn {
     pub amount_lamports: u64,
 }
 
+#[event]
+pub struct SettlerUpdated {
+    pub new_settler: Pubkey,
+}
+
 #[account]
 pub struct GuaranteeVault {
     pub authority: Pubkey,
+    pub settler_authority: Pubkey,
     pub total_premiums_collected: u64,
     pub total_payouts: u64,
     pub total_active_exposure: u64,
@@ -140,7 +146,20 @@ pub struct SettlePolicy<'info> {
     pub policy: Account<'info, GuaranteePolicy>,
     #[account(mut)]
     pub buyer: Signer<'info>,
+    #[account(mut)]
+    pub settler: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateSettler<'info> {
+    #[account(
+        mut,
+        seeds = [GuaranteeVault::SEED_PREFIX.as_bytes()],
+        bump = vault.bump
+    )]
+    pub vault: Account<'info, GuaranteeVault>,
+    pub authority: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -176,9 +195,10 @@ pub struct WithdrawProfit<'info> {
 pub mod kestrel {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, settler_authority: Pubkey) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
         vault.authority = ctx.accounts.authority.key();
+        vault.settler_authority = settler_authority;
         vault.total_premiums_collected = 0;
         vault.total_payouts = 0;
         vault.total_active_exposure = 0;
@@ -269,13 +289,14 @@ pub mod kestrel {
         let policy = &mut ctx.accounts.policy;
         let vault = &mut ctx.accounts.vault;
 
+        require!(
+            ctx.accounts.settler.key() == vault.settler_authority,
+            ErrorCode::UnauthorizedSettler
+        );
+
         let clock = Clock::get()?;
         let now = clock.unix_timestamp;
 
-        require!(
-            policy.buyer == ctx.accounts.buyer.key(),
-            ErrorCode::UnauthorizedSettler
-        );
         require!(
             policy.status == STATUS_ACTIVE,
             ErrorCode::PolicyAlreadySettled
@@ -376,6 +397,22 @@ pub mod kestrel {
         emit!(ProfitWithdrawn {
             authority: ctx.accounts.authority.key(),
             amount_lamports,
+        });
+
+        Ok(())
+    }
+
+    pub fn update_settler(ctx: Context<UpdateSettler>, new_settler: Pubkey) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+        require!(
+            ctx.accounts.authority.key() == vault.authority,
+            ErrorCode::UnauthorizedSettler
+        );
+
+        vault.settler_authority = new_settler;
+
+        emit!(SettlerUpdated {
+            new_settler,
         });
 
         Ok(())
