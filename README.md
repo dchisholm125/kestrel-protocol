@@ -1,61 +1,53 @@
-# kestrel-protocol
+# Kestrel Protocol
+Slippage insurance for Solana Jupiter swaps.
 
-Public-facing home for Kestrel Protocol.
+## What It Does
+Before a swap, a user buys a policy that sets a slippage guarantee and locks the premium in a vault. If the executed swap slips beyond the guarantee, the vault pays the difference. If slippage stays within the guarantee, the premium is kept.
 
-This repo is intended to contain:
-- the on-chain `kestrel-program/`
-- public docs in `docs/`
-- public tests in `tests/`
-- public SDK work in `packages/sdk/`
-- public examples in `examples/`
+## Live Mainnet Proof
+Program: 46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS
+Vault:   EPGFuH2EnTG5fGvU6GaeAWzfgEUskGe6GozBUJriEu1J
 
-## Current contents
-- `kestrel-program/` — Anchor/Solana program
-- `docs/README.md` — public protocol overview
-- `docs/ARCHITECTURE.md` — architecture and accounting model
-- `docs/PRICING_MODEL.md` — public pricing structure (not secret coefficients)
-- `docs/CURRENT_STATUS.md` — current proof/status summary
-- `tests/` — cleaned devnet test harnesses
+First payout transaction:
+  Policy:  4DgqNU6rRGamXMEnjL1fPwfHnJUmHpggDuZiW2MLCjpawYHLpxDAU5uwPo64BuoZLCbjUbgPB8ghcudE3NgGsrMu
+  Swap:    4MojWcsUBqEG5DJMNFxt4wxxEp7qwNyFwjB26GBp2wk86mUMwBb9Nq1yceE32P1SmTLt623NhVwYw9kz4Rt95TXS
+  Payout:  5EGSZsGAnsQozYCUFLHfRqLw5PnyjP3vaMGapJtHpX2PXGZYL2K8srhnCvQaxtUQ9XEDtC1DaYJac4FC8zxbFBhT
 
-## Testing and Local Development
+Second payout transaction:
+  Policy:  51uAewCg8c3toRy5cDfhr4uaq4ENhtViHvFvuxQ2ZD3B7gwAEzHTCNwmuaixXFiqNZ6W2xexy6wqebQcWWgRzLbb
+  Swap:    29V2PMjAtdhRt6WyXuyF865SaRT11K6BAW9porcuhSsBWvQhb62DQsQzbqwGAcAXCfjxPvE5SvDtYsuh6k1UwoYi
+  Payout:  4Y78ZuScmLNkQWcFstzCdX6d24qXp8ndZqD6rh9N57YxXodAYwcAibNNTqTWczjNwfFHoLEngXnw71S93So7TfFK
 
-To run the devnet integration tests, you'll need to set up a local environment.
+## Pricing
+75 bps guarantee → 20 bps premium
+25 bps guarantee → 30 bps premium
+10 bps guarantee → 50 bps premium
+ 5 bps guarantee → 80 bps premium
+ 1 bps guarantee → 200 bps premium
 
-### 1. Prerequisites
-- Node.js v20+ (v22 recommended)
-- `npm install` in the project root (or inside `packages/sdk`)
+Priced from 134,000+ real Jupiter swap observations. Break-even stress multiplier: 2.79x current conditions.
 
-### 2. Environment Setup
-Create a `.env` file in the project root (not inside `packages/sdk/`):
+## How It Works
+1. Get a quote (check current regime + premium)
+2. Issue policy (premium locked in vault)
+3. Execute your Jupiter swap
+4. Settle (vault pays excess slippage if breached, keeps premium if not)
 
-```bash
-DEVNET_RPC_URL=https://api.devnet.solana.com
-DEVNET_PROGRAM_ID=3TaXEUn24hw4SncGP9aFskwSqsbhaZod14QEX2akLFxg
-SOL_PRICE_USD=150
-# Your devnet authority/payer keypair as a JSON array
-DEVNET_PRIVATE_KEY=[...] 
-```
+## Architecture
+- On-chain program: Anchor/Rust, Solana mainnet-beta
+- Pricing: Off-chain, regime-aware (CALM/ELEVATED/HALTED)
+- Settlement: Automatic, no claim filing required
+- Data: 134k+ real SOL/USDC swap observations
 
-### 3. Running Tests
-Navigate to the SDK directory:
-```bash
-cd packages/sdk
-```
+## SDK
+Coming soon: npm install @kestrel-protocol/sdk
 
-**Quick End-to-End Test:**
-Checks vault initialization, policy issuance, and settlement with a simulated Jupiter swap.
-```bash
-npm run test:quick:devnet
-```
+## Status
+✅ Live on Solana mainnet-beta
+✅ Payout path proven on-chain
+✅ Stress tested (5/5 scenarios passing)
+⚠️  SDK in development
+⚠️  Not audited — use at your own risk
 
-**Full Integration Test:**
-Runs multiple scenarios (Happy Path and Claim Path) with real (or simulated fallback) Jupiter swaps on devnet.
-```bash
-npm run test:full:devnet
-```
-
-*Note: Use `DEBUG_ALL=true` before the commands to see detailed underwriting traces.*
-
-## Notes
-This repo should remain safe for public inspection.
-Do not place private pricing internals, secret keys, raw ops notes, or proprietary calibration data here.
+## Contact
+@BMan5280
