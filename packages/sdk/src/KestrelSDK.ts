@@ -85,15 +85,24 @@ export class KestrelSDK {
       Math.ceil((premiumUsd / DEFAULT_SOL_PRICE_USD) * anchor.web3.LAMPORTS_PER_SOL),
     );
 
-    const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+    const market = await this.getMarket();
+    const result = {
+      policyAddress: Keypair.generate().publicKey,
+      regime: market.regime,
+      premiumBps: market.premiumBps,
+      sequenceNumber: 0,
+      tokenPair: TOKEN_PAIR_SOL_USDC,
+      direction,
+    };
 
     return {
-      policyAddress: Keypair.generate().publicKey,
-      premiumLamports,
-      premiumBps: tier.premiumBps,
-      expiresAt,
-      regime: 'CALM',
-      tokenPair: TOKEN_PAIR_SOL_USDC,
+      address: result.policyAddress.toString(),
+      premiumLamports: premiumLamports,
+      premiumBps: market.premiumBps,
+      guaranteedBps: params.guaranteedBps,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      regime: result.regime,
+      sequenceNumber: result.sequenceNumber,
     };
   }
 

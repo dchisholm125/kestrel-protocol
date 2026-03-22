@@ -31,12 +31,13 @@ export interface ProtectParams {
 }
 
 export interface Policy {
-  policyAddress: PublicKey;
+  address: string;
   premiumLamports: number;
   premiumBps: number;
-  expiresAt: number;
+  guaranteedBps: number;
+  expiresAt: Date;
   regime: MarketRegime;
-  tokenPair?: number;
+  sequenceNumber: number;
 }
 
 export interface SettleParams {
