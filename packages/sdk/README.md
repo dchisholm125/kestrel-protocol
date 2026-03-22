@@ -1,12 +1,6 @@
 # @kestrel-protocol/sdk
 
-TypeScript SDK for Kestrel Protocol protected swaps.
-
-The public integration target is:
-- create a `KestrelSDK`
-- call `getMarket()`
-- call `quoteProtectedSwap()`
-- call `executeProtectedSwap()`
+Slippage insurance for Solana Jupiter swaps.
 
 ## Install
 
@@ -14,55 +8,131 @@ The public integration target is:
 npm install @kestrel-protocol/sdk
 ```
 
-## Repo demo
+## Quickstart
 
-Inside this repo, the runnable SDK demo is:
+```typescript
+import { KestrelSDK } from '../src/index.js';
 
-```bash
-cd packages/sdk
-npm install
-cp .env.example .env
-# fill in RPC_URL and WALLET_KEY
-npm run example:swap
+async function main() {
+  const rpcUrl = process.env.RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+  const swapSizeUsd = Number(process.env.SWAP_SIZE_USD ?? '1000');
+  const guaranteedBps = Number(process.env.GUARANTEED_BPS ?? '25');
+  const direction = (process.env.SWAP_DIRECTION as 'Buy' | 'Sell') ?? 'Buy';
+  const actualSlippageBps = Number(process.env.ACTUAL_SLIPPAGE_BPS ?? '30');
+
+  const sdk = new KestrelSDK({ rpcUrl });
+
+  const market = await sdk.getMarket();
+  console.log('Market:', market.regime, `premium=${market.premiumBps}bps`);
+
+  const policy = await sdk.protect({
+    swapSizeUsd,
+    guaranteedBps,
+    direction,
+  });
+  console.log('Policy:', policy.policyAddress.toBase58(), `premium=${policy.premiumLamports} lamports`);
+
+  // Jupiter swap execution happens here (example):
+  // const swapSig = await executeJupiterSwap({ swapSizeUsd, direction, maxSlippageBps: guaranteedBps });
+
+  const settlement = await sdk.settle({
+    policyAddress: policy.policyAddress,
+    actualSlippageBps,
+    swapSizeUsd,
+    sequenceNumber: 0,
+  });
+
+  console.log('Settlement:', settlement.outcome, `payout=${settlement.payoutLamports} lamports`);
+  console.log('Signature:', settlement.signature);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 ```
 
-## Example
+## Coverage Tiers
 
-```ts
-import { KestrelSDK } from '@kestrel-protocol/sdk';
-import { Connection, Keypair } from '@solana/web3.js';
+| Guarantee | Premium | Use Case |
+|-----------|---------|----------|
+| ±75 bps   | 20 bps  | Casual trading |
+| ±25 bps   | 30 bps  | Active traders |
+| ±10 bps   | 50 bps  | Bots |
+| ±5 bps    | 80 bps  | Systematic |
+| ±1 bps    | 200 bps | Precision |
 
-const connection = new Connection(process.env.RPC_URL!);
-const wallet = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(process.env.WALLET_KEY!)),
-);
+## API Reference
 
-const kestrel = new KestrelSDK({
-  network: 'mainnet-beta',
-  wallet,
-  connection,
-});
+### getMarket()
 
-const market = await kestrel.getMarket();
-console.log(`Regime: ${market.regime}`);
-console.log(`Premium: ${market.premiumBps}bps`);
+Returns current market conditions and available tiers.
 
-const quote = await kestrel.quoteProtectedSwap({
-  inputMint: 'So11111111111111111111111111111111111111112',
-  outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  amountLamports: 10_000_000,
-});
-
-const result = await kestrel.executeProtectedSwap(quote);
-console.log(result.swapSignature);
+```typescript
+export interface MarketState {
+  regime: MarketRegime;
+  premiumBps: number;
+  vaultOpen: boolean;
+  guaranteeOptions: GuaranteeOption[];
+  breachRate: number;
+  coveredBps: number;
+}
 ```
 
-## Current limits
+### protect(params)
 
-- The SDK now wraps Jupiter route discovery, Kestrel policy issuance, swap execution, and automatic settlement.
-- The current on-chain program still uses a single policy PDA per buyer wallet, so repeated protected swaps require a fresh buyer key until policy account rotation is added.
-- Settlement still depends on the configured Kestrel settler authority. The SDK defaults `settler` to the caller wallet so the repo demo stays simple, but production vaults may use a distinct hot settler key.
+Issues a slippage guarantee policy before your swap.
 
-## Legacy helpers
+```typescript
+export interface ProtectParams {
+  swapSizeUsd: number;
+  guaranteedBps: number;
+  direction: SwapDirection;
+}
 
-The older math-first helpers (`quote`, `prepare`, `previewSettlement`) remain exported so existing mock integrations in this repo keep working while the public SDK surface moves to the protected swap flow.
+export interface Policy {
+  policyAddress: PublicKey;
+  premiumLamports: number;
+  premiumBps: number;
+  expiresAt: number;
+  regime: MarketRegime;
+}
+```
+
+### settle(params)
+
+Settles the policy after swap execution.
+
+```typescript
+export interface SettleParams {
+  policyAddress: PublicKey;
+  actualSlippageBps: number;
+  swapSizeUsd: number;
+  sequenceNumber: number;
+}
+
+export interface Settlement {
+  outcome: SettlementOutcome;
+  payoutLamports: number;
+  signature: string;
+}
+```
+
+## Live Proof
+
+Program: 46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS
+
+Real mainnet payout transactions:
+- Policy:  4DgqNU6rRGamXMEnjL1fPwfHnJUmHpggDuZiW2MLCjpawYHLpxDAU5uwPo64BuoZLCbjUbgPB8ghcudE3NgGsrMu
+- Swap:    4MojWcsUBqEG5DJMNFxt4wxxEp7qwNyFwjB26GBp2wk86mUMwBb9Nq1yceE32P1SmTLt623NhVwYw9kz4Rt95TXS
+- Payout:  5EGSZsGAnsQozYCUFLHfRqLw5PnyjP3vaMGapJtHpX2PXGZYL2K8srhnCvQaxtUQ9XEDtC1DaYJac4FC8zxbFBhT
+
+## Status
+
+✅ Live on Solana mainnet-beta
+✅ Payout path proven on-chain
+⚠️  Not audited — use at your own risk
+
+## Protocol
+
+Source: https://github.com/kestrel-protocol/kestrel-protocol

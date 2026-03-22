@@ -1,117 +1,50 @@
-import type { RouteInfo } from '@jup-ag/core';
-import type { Cluster, Connection, Keypair, PublicKey } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
 
-export type Awaitable<T> = T | Promise<T>;
+/**
+ * Public API types for Kestrel Protocol SDK
+ */
+
 export type MarketRegime = 'CALM' | 'ELEVATED' | 'HALTED';
+export type SwapDirection = 'Buy' | 'Sell';
+export type SettlementOutcome = 'covered' | 'not_covered';
 
-export interface KestrelMarketState {
+export interface MarketState {
   regime: MarketRegime;
-  currentBreachRate: number;
   premiumBps: number;
-  explanation: string;
   vaultOpen: boolean;
+  guaranteeOptions: GuaranteeOption[];
+  breachRate: number;
   coveredBps: number;
-  liabilityCapBps: number;
-  capitalGamma: number;
 }
 
-export interface ProtectionQuoteRequest {
-  inputMint: string;
-  outputMint: string;
-  amountUsd: number;
-  guaranteedSlippageBps?: number;
-  market: KestrelMarketState;
-  solPriceUsd: number;
-}
-
-export interface ProtectionQuote {
-  premiumBps: number;
-  premiumUsd: number;
-  premiumLamports: number;
-  guaranteedSlippageBps: number;
-  regime: MarketRegime;
-  explanation: string;
-}
-
-export interface SettlementPreviewInput {
-  actualSlippageBps: number;
-  guaranteedSlippageBps: number;
-  swapSizeUsd: number;
-  solPriceUsd: number;
-}
-
-export interface SettlementPreview {
-  excessBps: number;
-  payoutUsd: number;
-  payoutLamports: number;
-}
-
-export interface KestrelPrepareProtectionInput {
-  amountUsd: number;
-  maxTotalCostBps?: number;
-  market: KestrelMarketState;
-  solPriceUsd: number;
-}
-
-export interface KestrelPrepareProtectionResult {
-  premiumBps: number;
-  premiumUsd: number;
-  premiumLamports: number;
-  guaranteedSlippageBps: number;
-  regime: MarketRegime;
-  maxTotalCostBps?: number;
-}
-
-export interface KestrelSDKOptions {
-  network?: Cluster;
-  wallet?: Keypair;
-  settler?: Keypair;
-  connection?: Connection;
-  programId?: PublicKey | string;
-  marketProvider?: () => Awaitable<KestrelMarketState>;
-  solPriceProvider?: () => Awaitable<number>;
-  quoteTtlMs?: number;
-  routeSlippageBufferBps?: number;
-}
-
-export interface ProtectedSwapQuoteParams {
-  inputMint: string;
-  outputMint: string;
-  amountLamports: number;
-  guaranteedSlippageBps?: number;
-}
-
-export interface ProtectedSwapPricingSnapshot {
-  solPriceUsd: number;
-  swapSizeUsd: number;
-  outputTokenUsdPrice: number | null;
-}
-
-export interface ProtectedSwapQuote {
-  inputMint: string;
-  outputMint: string;
-  amountLamports: number;
-  expectedOutputAmount: number;
-  expectedOutputDecimals: number;
+export interface GuaranteeOption {
   guaranteedBps: number;
-  premiumLamports: number;
   premiumBps: number;
-  regime: MarketRegime;
-  validUntil: Date;
-  _jupiterRoute: RouteInfo;
-  _market: KestrelMarketState;
-  _pricing: ProtectedSwapPricingSnapshot;
 }
 
-export interface ProtectedSwapResult {
-  policyAddress: string;
-  swapSignature: string;
-  actualSlippageBps: number;
+export interface ProtectParams {
+  swapSizeUsd: number;
   guaranteedBps: number;
-  outcome: 'KEPT_PREMIUM' | 'PAID_CLAIM';
-  premiumPaidLamports: number;
+  direction: SwapDirection;
+}
+
+export interface Policy {
+  policyAddress: PublicKey;
+  premiumLamports: number;
+  premiumBps: number;
+  expiresAt: number;
+  regime: MarketRegime;
+}
+
+export interface SettleParams {
+  policyAddress: PublicKey;
+  actualSlippageBps: number;
+  swapSizeUsd: number;
+  sequenceNumber: number;
+}
+
+export interface Settlement {
+  outcome: SettlementOutcome;
   payoutLamports: number;
-  vaultNetLamports: number;
-  solscanSwap: string;
-  solscanPolicy: string;
+  signature: string;
 }
