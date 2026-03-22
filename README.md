@@ -1,3 +1,12 @@
+## Security
+
+Token pair validation is enforced at two layers:
+- SDK rejects unsupported pairs before hitting chain
+- On-chain program rejects at contract level
+
+v1 supports SOL/USDC only. Additional pairs 
+require separate pricing calibration.
+
 # Kestrel Protocol
 Slippage insurance for Solana Jupiter swaps.
 
