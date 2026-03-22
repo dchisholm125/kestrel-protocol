@@ -5,6 +5,13 @@
 export const MAINNET_PROGRAM_ID = '46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS';
 export const DEVNET_PROGRAM_ID = '46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS';
 
+// Token mints
+export const SOL_MINT = 'So11111111111111111111111111111111111111112';
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+// Token pair identifiers
+export const TOKEN_PAIR_SOL_USDC = 0;
+
 export const MAINNET_VAULT_PDA = 'EPGFuH2EnTG5fGvU6GaeAWzfgEUskGe6GozBUJriEu1J';
 
 export const DEFAULT_SOL_PRICE_USD = 150;

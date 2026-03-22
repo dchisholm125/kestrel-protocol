@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@kestrel-protocol/sdk": "file:../sdk",
     "@popperjs/core": "^2.11.8",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-vue": "^0.4.5",

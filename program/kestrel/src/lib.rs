@@ -26,6 +26,8 @@ pub enum ErrorCode {
     BuyerMismatch,
     #[msg("Vault account is already closed or invalid")]
     VaultAlreadyClosed,
+    #[msg("Unsupported token pair: only SOL/USDC is currently supported")]
+    UnsupportedTokenPair,
 }
 
 #[event]
@@ -93,6 +95,8 @@ const STATUS_SETTLED_CLAIM: u8 = 2;
 const STATUS_EXPIRED: u8 = 3;
 const MAX_EXPOSURE_BPS: u64 = 5_000;
 
+pub const TOKEN_PAIR_SOL_USDC: u8 = 0;
+
 impl GuaranteePolicy {
     const SEED_PREFIX: &'static str = "policy";
     const SPACE: usize = 8 + std::mem::size_of::<GuaranteePolicy>();
@@ -130,7 +134,7 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(sequence_number: u64, guaranteed_slippage_bps: i16, swap_size_usd_cents: u64, direction: u8, premium_lamports: u64)]
+#[instruction(sequence_number: u64, guaranteed_slippage_bps: i16, swap_size_usd_cents: u64, direction: u8, premium_lamports: u64, token_pair: u8)]
 pub struct IssuePolicy<'info> {
     #[account(
         mut,
@@ -253,7 +257,12 @@ pub mod kestrel {
         swap_size_usd_cents: u64,
         direction: u8,
         premium_lamports: u64,
+        token_pair: u8,
     ) -> Result<()> {
+        require!(
+            token_pair == TOKEN_PAIR_SOL_USDC,
+            ErrorCode::UnsupportedTokenPair
+        );
         require!(
             guaranteed_slippage_bps > 0 && guaranteed_slippage_bps <= 500,
             ErrorCode::InvalidSlippageBps

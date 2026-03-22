@@ -11,6 +11,9 @@ import {
   DEFAULT_SOL_PRICE_USD,
   GUARANTEE_TIERS,
   MAINNET_PROGRAM_ID,
+  SOL_MINT,
+  USDC_MINT,
+  TOKEN_PAIR_SOL_USDC,
 } from './constants.js';
 
 export interface KestrelSDKOptions {
@@ -42,6 +45,22 @@ export class KestrelSDK {
   }
 
   async protect(params: ProtectParams): Promise<Policy> {
+    // Validate token pair before processing
+    const inputMint = params.inputMint ?? SOL_MINT;
+    const outputMint = params.outputMint ?? USDC_MINT;
+
+    const isSOLUSDC =
+      (inputMint === SOL_MINT && outputMint === USDC_MINT) ||
+      (inputMint === USDC_MINT && outputMint === SOL_MINT);
+
+    if (!isSOLUSDC) {
+      throw new Error(
+        'Kestrel v1 supports SOL/USDC only. ' +
+        'Other pairs require separate pricing ' +
+        'calibration. Support coming in v2.'
+      );
+    }
+
     if (!Number.isFinite(params.swapSizeUsd) || params.swapSizeUsd <= 0) {
       throw new Error('swapSizeUsd must be a positive number');
     }
@@ -73,6 +92,7 @@ export class KestrelSDK {
       premiumBps: tier.premiumBps,
       expiresAt,
       regime: 'CALM',
+      tokenPair: TOKEN_PAIR_SOL_USDC,
     };
   }
 

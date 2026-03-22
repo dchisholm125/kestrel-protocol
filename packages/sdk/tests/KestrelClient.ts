@@ -46,6 +46,7 @@ const IDL: anchor.Idl = {
         { name: 'swap_size_usd_cents', type: 'u64' },
         { name: 'direction', type: 'u8' },
         { name: 'premium_lamports', type: 'u64' },
+        { name: 'token_pair', type: 'u8' },
       ],
     },
     {
@@ -119,6 +120,7 @@ export interface IssuePolicyParams {
   direction: number;
   premiumLamports: number;
   sequenceNumber: number;
+  tokenPair?: number;
   buyer?: PublicKey;
   buyerKeypair?: Keypair;
 }
@@ -210,6 +212,15 @@ export class KestrelClient {
   }
 
   async issuePolicy(params: IssuePolicyParams): Promise<IssuePolicyResult> {
+    // Pre-flight check for token pair support
+    const tokenPair = params.tokenPair ?? 0;
+    if (tokenPair !== 0) {
+      throw new Error(
+        'Kestrel v1 only supports SOL/USDC. ' +
+        'Other pairs require separate pricing calibration.'
+      );
+    }
+
     const market = this.getMarketState();
     if (market.regime === 'HALTED') {
       throw new Error(`[Kestrel] Vault halted — circuit breaker active. Current breach rate: ${(market.currentBreachRate * 100).toFixed(1)}%`);
@@ -224,7 +235,7 @@ export class KestrelClient {
     const buyer = params.buyer ?? this.wallet.publicKey;
     const policyPda = this.findPolicyPda(buyer);
     const tx = await this.program.methods.issuePolicy(
-      new BN(params.sequenceNumber), params.guaranteedSlippageBps, new BN(params.swapSizeUsdCents), params.direction, new BN(params.premiumLamports),
+      new BN(params.sequenceNumber), params.guaranteedSlippageBps, new BN(params.swapSizeUsdCents), params.direction, new BN(params.premiumLamports), tokenPair
     ).accounts({
       vault: this.findVaultPda(), policy: policyPda, buyer, systemProgram: anchor.web3.SystemProgram.programId,
     }).transaction();

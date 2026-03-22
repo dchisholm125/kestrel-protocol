@@ -26,6 +26,8 @@ export interface ProtectParams {
   swapSizeUsd: number;
   guaranteedBps: number;
   direction: SwapDirection;
+  inputMint?: string;
+  outputMint?: string;
 }
 
 export interface Policy {
@@ -34,6 +36,7 @@ export interface Policy {
   premiumBps: number;
   expiresAt: number;
   regime: MarketRegime;
+  tokenPair?: number;
 }
 
 export interface SettleParams {
