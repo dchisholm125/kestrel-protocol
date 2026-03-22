@@ -48,6 +48,7 @@ export class KestrelSDK {
     // Validate token pair before processing
     const inputMint = params.inputMint ?? SOL_MINT;
     const outputMint = params.outputMint ?? USDC_MINT;
+    const direction = inputMint === SOL_MINT ? 0 : 1;
 
     const isSOLUSDC =
       (inputMint === SOL_MINT && outputMint === USDC_MINT) ||
@@ -67,8 +68,8 @@ export class KestrelSDK {
     if (!Number.isFinite(params.guaranteedBps) || params.guaranteedBps <= 0) {
       throw new Error('guaranteedBps must be a positive number');
     }
-    if (params.direction !== 'Buy' && params.direction !== 'Sell') {
-      throw new Error("direction must be 'Buy' or 'Sell'");
+    if (params.direction !== undefined && params.direction !== direction) {
+      throw new Error(`direction must be ${direction} for inputMint ${inputMint}`);
     }
 
     const tier = GUARANTEE_TIERS.find((item) => item.guaranteedBps === params.guaranteedBps);

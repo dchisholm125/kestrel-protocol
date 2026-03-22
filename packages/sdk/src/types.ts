@@ -5,7 +5,7 @@ import { PublicKey } from '@solana/web3.js';
  */
 
 export type MarketRegime = 'CALM' | 'ELEVATED' | 'HALTED';
-export type SwapDirection = 'Buy' | 'Sell';
+export type SwapDirection = 0 | 1;
 export type SettlementOutcome = 'covered' | 'not_covered';
 
 export interface MarketState {
@@ -25,7 +25,7 @@ export interface GuaranteeOption {
 export interface ProtectParams {
   swapSizeUsd: number;
   guaranteedBps: number;
-  direction: SwapDirection;
+  direction?: SwapDirection;
   inputMint?: string;
   outputMint?: string;
 }
