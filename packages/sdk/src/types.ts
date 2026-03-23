@@ -42,9 +42,10 @@ export interface Policy {
 
 export interface SettleParams {
   policyAddress: PublicKey;
-  actualSlippageBps: number;
   swapSizeUsd: number;
   sequenceNumber: number;
+  swapSignature?: string;
+  actualOutputUsdcMicro?: number;
 }
 
 export interface Settlement {

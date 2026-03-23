@@ -12,6 +12,9 @@ export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 // Token pair identifiers
 export const TOKEN_PAIR_SOL_USDC = 0;
 
+export const PYTH_SOL_USD_MAINNET = '7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE';
+export const PYTH_SOL_USD_DEVNET = 'J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix';
+
 export const MAINNET_VAULT_PDA = 'EPGFuH2EnTG5fGvU6GaeAWzfgEUskGe6GozBUJriEu1J';
 
 export const DEFAULT_SOL_PRICE_USD = 150;

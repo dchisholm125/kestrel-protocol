@@ -1,5 +1,5 @@
 import * as anchor from '@coral-xyz/anchor';
-import { Keypair, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import type {
   MarketState,
   ProtectParams,
@@ -26,11 +26,13 @@ export class KestrelSDK {
   private readonly programId: PublicKey;
   private readonly rpcUrl: string;
   private readonly commitment: anchor.web3.Commitment;
+  private readonly connection: Connection;
 
   constructor(options: KestrelSDKOptions = {}) {
     this.programId = new PublicKey(options.programId ?? MAINNET_PROGRAM_ID);
     this.rpcUrl = options.rpcUrl ?? 'https://api.mainnet-beta.solana.com';
     this.commitment = options.commitment ?? 'confirmed';
+    this.connection = new Connection(this.rpcUrl, this.commitment);
   }
 
   async getMarket(): Promise<MarketState> {
@@ -110,9 +112,6 @@ export class KestrelSDK {
     if (!params.policyAddress) {
       throw new Error('policyAddress is required');
     }
-    if (!Number.isFinite(params.actualSlippageBps)) {
-      throw new Error('actualSlippageBps is required');
-    }
     if (!Number.isFinite(params.swapSizeUsd) || params.swapSizeUsd <= 0) {
       throw new Error('swapSizeUsd must be a positive number');
     }
@@ -120,7 +119,42 @@ export class KestrelSDK {
       throw new Error('sequenceNumber must be a non-negative number');
     }
 
-    const covered = Math.abs(params.actualSlippageBps) > 50;
+    let actualOutputUsdcMicro = params.actualOutputUsdcMicro;
+    if (typeof actualOutputUsdcMicro !== 'number' && params.swapSignature) {
+      const tx = await this.connection.getTransaction(params.swapSignature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: this.commitment as anchor.web3.Finality,
+      });
+      if (!tx) {
+        throw new Error('Swap transaction not found');
+      }
+      if (tx.meta?.err) {
+        throw new Error('Swap transaction failed');
+      }
+
+      const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      const preUsdc = (tx.meta?.preTokenBalances ?? [])
+        .filter((balance) => balance.mint === USDC_MINT)
+        .reduce((sum, balance) => sum + (balance.uiTokenAmount.uiAmount ?? 0), 0);
+      const postUsdc = (tx.meta?.postTokenBalances ?? [])
+        .filter((balance) => balance.mint === USDC_MINT)
+        .reduce((sum, balance) => sum + (balance.uiTokenAmount.uiAmount ?? 0), 0);
+
+      actualOutputUsdcMicro = Math.round((postUsdc - preUsdc) * 1_000_000);
+    }
+
+    if (!Number.isFinite(actualOutputUsdcMicro)) {
+      throw new Error('actualOutputUsdcMicro is required (or provide swapSignature)');
+    }
+    const verifiedOutputUsdcMicro = actualOutputUsdcMicro as number;
+
+    const actualOutputUsdc = verifiedOutputUsdcMicro / 1_000_000;
+    const expectedOutputUsdc = params.swapSizeUsd;
+    const actualSlippageBps = expectedOutputUsdc <= 0
+      ? 0
+      : Math.max(0, Math.round(((expectedOutputUsdc - actualOutputUsdc) / expectedOutputUsdc) * 10_000));
+
+    const covered = actualSlippageBps > 50;
     const payoutLamports = covered
       ? Math.ceil((params.swapSizeUsd * 0.005 * anchor.web3.LAMPORTS_PER_SOL) / DEFAULT_SOL_PRICE_USD)
       : 0;

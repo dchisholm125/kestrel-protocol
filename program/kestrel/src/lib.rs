@@ -1,4 +1,7 @@
 use anchor_lang::{prelude::*, system_program};
+use std::str::FromStr;
+
+const MAX_PRICE_AGE_SECONDS: i64 = 120;
 
 declare_id!("46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS");
 
@@ -28,6 +31,12 @@ pub enum ErrorCode {
     VaultAlreadyClosed,
     #[msg("Unsupported token pair: only SOL/USDC is currently supported")]
     UnsupportedTokenPair,
+    #[msg("Pyth price feed unavailable")]
+    PriceUnavailable,
+    #[msg("Pyth price data is too stale")]
+    PriceTooStale,
+    #[msg("Arithmetic overflow")]
+    Overflow,
 }
 
 #[event]
@@ -96,6 +105,32 @@ const STATUS_EXPIRED: u8 = 3;
 const MAX_EXPOSURE_BPS: u64 = 5_000;
 
 pub const TOKEN_PAIR_SOL_USDC: u8 = 0;
+pub const PYTH_SOL_USD_MAINNET: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
+pub const PYTH_SOL_USD_DEVNET: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix";
+const PYTH_RECEIVER_PROGRAM_ID: &str = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ";
+const PYTH_PUSH_ORACLE_PROGRAM_ID: &str = "pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT";
+// SOL/USD PriceFeedMessage layout (after 8-byte discriminator + 32-byte write_authority):
+//   offset 40: verification_level (1 byte, 1 = Full)
+//   offset 41..73: feed_id ([u8; 32])
+//   offset 73..81: price (i64)
+//   offset 81..89: conf (u64)
+//   offset 89..93: exponent (i32)
+//   offset 93..101: publish_time (i64)
+const PYTH_SOL_USD_FEED_ID: [u8; 32] = [
+    239, 13, 139, 111, 218, 44, 235, 164, 29, 161, 93, 64, 149, 209, 218, 57, 42, 13, 47, 142,
+    208, 198, 199, 188, 15, 76, 250, 200, 194, 128, 181, 109,
+];
+const PYTH_SOL_USD_SHARD_ID: u16 = 0;
+
+fn expected_pyth_sol_usd_mainnet_feed() -> Pubkey {
+    let push_oracle_program_id = Pubkey::from_str(PYTH_PUSH_ORACLE_PROGRAM_ID)
+        .expect("valid Pyth push-oracle program id");
+    Pubkey::find_program_address(
+        &[&PYTH_SOL_USD_SHARD_ID.to_le_bytes(), &PYTH_SOL_USD_FEED_ID],
+        &push_oracle_program_id,
+    )
+    .0
+}
 
 impl GuaranteePolicy {
     const SEED_PREFIX: &'static str = "policy";
@@ -184,6 +219,11 @@ pub struct SettlePolicy<'info> {
     pub buyer: UncheckedAccount<'info>,
     #[account(mut)]
     pub signer: Signer<'info>,
+    /// CHECK: Pyth SOL/USD push-oracle PriceUpdateV2 account.
+    /// Owner is validated against PYTH_RECEIVER_PROGRAM_ID.
+    /// Feed ID and staleness are validated in the instruction body.
+    pub price_update: AccountInfo<'info>,
+    pub clock: Sysvar<'info, Clock>,
     pub system_program: Program<'info, System>,
 }
 
@@ -340,8 +380,7 @@ pub mod kestrel {
 
     pub fn settle_policy(
         ctx: Context<SettlePolicy>,
-        actual_slippage_bps: i16,
-        payout_lamports: u64,
+        actual_output_usdc_micro: u64,
     ) -> Result<()> {
         let policy = &mut ctx.accounts.policy;
         let vault = &mut ctx.accounts.vault;
@@ -369,27 +408,134 @@ pub mod kestrel {
             ErrorCode::PolicyExpired
         );
 
-        let claimed =
-            actual_slippage_bps.unsigned_abs() > policy.guaranteed_slippage_bps.unsigned_abs();
+        // Validate the price update account is a genuine Pyth push-oracle account
+        // for the SOL/USD feed, owned by the Pyth Receiver program.
+        let pyth_mainnet = expected_pyth_sol_usd_mainnet_feed();
+        let pyth_devnet = Pubkey::from_str(PYTH_SOL_USD_DEVNET)
+            .map_err(|_| error!(ErrorCode::PriceUnavailable))?;
+        require!(
+            ctx.accounts.price_update.key() == pyth_mainnet
+                || ctx.accounts.price_update.key() == pyth_devnet,
+            ErrorCode::PriceUnavailable
+        );
+        require!(
+            ctx.accounts.price_update.owner == &Pubkey::from_str(PYTH_RECEIVER_PROGRAM_ID)
+                .map_err(|_| error!(ErrorCode::PriceUnavailable))?,
+            ErrorCode::PriceUnavailable
+        );
+
+        // Parse PriceUpdateV2 account data (manual layout, no SDK version conflict):
+        //   [0..8]   discriminator
+        //   [8..40]  write_authority (Pubkey)
+        //   [40]     verification_level variant (1 = Full)
+        //   [41..73] feed_id ([u8; 32])
+        //   [73..81] price (i64, little-endian)
+        //   [81..89] conf (u64, little-endian)
+        //   [89..93] exponent (i32, little-endian)
+        //   [93..101] publish_time (i64, little-endian)
+        let data = ctx
+            .accounts
+            .price_update
+            .try_borrow_data()
+            .map_err(|_| error!(ErrorCode::PriceUnavailable))?;
+        require!(data.len() >= 101, ErrorCode::PriceUnavailable);
+
+        let verification_level = data[40];
+        require!(verification_level == 1, ErrorCode::PriceUnavailable);
+
+        let feed_id_bytes: [u8; 32] = data[41..73]
+            .try_into()
+            .map_err(|_| error!(ErrorCode::PriceUnavailable))?;
+        require!(feed_id_bytes == PYTH_SOL_USD_FEED_ID, ErrorCode::PriceUnavailable);
+
+        let price = i64::from_le_bytes(
+            data[73..81]
+                .try_into()
+                .map_err(|_| error!(ErrorCode::PriceUnavailable))?,
+        );
+        let price_exponent = i32::from_le_bytes(
+            data[89..93]
+                .try_into()
+                .map_err(|_| error!(ErrorCode::PriceUnavailable))?,
+        );
+        let publish_time = i64::from_le_bytes(
+            data[93..101]
+                .try_into()
+                .map_err(|_| error!(ErrorCode::PriceUnavailable))?,
+        );
+
+        msg!("Pyth price: {} exp: {} publish_time: {} now: {}", price, price_exponent, publish_time, now);
+
+        let price_age = now
+            .checked_sub(publish_time)
+            .ok_or(error!(ErrorCode::PriceTooStale))?;
+        require!(price_age <= MAX_PRICE_AGE_SECONDS, ErrorCode::PriceTooStale);
+
+        require!(price > 0, ErrorCode::PriceUnavailable);
+        let sol_price_usd = (price as f64) * 10f64.powi(price_exponent);
+        require!(sol_price_usd > 0.0, ErrorCode::PriceUnavailable);
+        let sol_price_usd_cents = (sol_price_usd * 100.0).round() as u64;
+
+        let expected_output_micro = policy
+            .swap_size_usd_cents
+            .checked_mul(1_000_000)
+            .ok_or(error!(ErrorCode::Overflow))?;
+
+        let verified_slippage_bps = if actual_output_usdc_micro >= expected_output_micro {
+            0u64
+        } else {
+            expected_output_micro
+                .saturating_sub(actual_output_usdc_micro)
+                .checked_mul(10_000)
+                .ok_or(error!(ErrorCode::Overflow))?
+                .checked_div(expected_output_micro)
+                .ok_or(error!(ErrorCode::Overflow))?
+        };
+
+        let guaranteed_bps = policy.guaranteed_slippage_bps.unsigned_abs() as u64;
+
+        let payout_lamports = if verified_slippage_bps > guaranteed_bps {
+            let excess_bps = verified_slippage_bps - guaranteed_bps;
+            let price_denominator = sol_price_usd_cents
+                .checked_mul(100)
+                .ok_or(error!(ErrorCode::Overflow))?;
+            let swap_size_lamports = policy
+                .swap_size_usd_cents
+                .checked_mul(1_000_000_000)
+                .ok_or(error!(ErrorCode::Overflow))?
+                .checked_div(price_denominator)
+                .ok_or(error!(ErrorCode::Overflow))?;
+
+            excess_bps
+                .checked_mul(swap_size_lamports)
+                .ok_or(error!(ErrorCode::Overflow))?
+                .checked_div(10_000)
+                .ok_or(error!(ErrorCode::Overflow))?
+        } else {
+            0u64
+        };
+
+        let claimed = payout_lamports > 0;
+        let verified_slippage_i16 = i16::try_from(verified_slippage_bps)
+            .map_err(|_| error!(ErrorCode::Overflow))?;
 
         if claimed {
-            let payout = payout_lamports;
             policy.status = STATUS_SETTLED_CLAIM;
-            vault.total_payouts = vault.total_payouts.saturating_add(payout);
+            vault.total_payouts = vault.total_payouts.saturating_add(payout_lamports);
             vault.total_active_exposure = vault
                 .total_active_exposure
                 .saturating_sub(policy.premium_paid_lamports);
 
             let vault_info = vault.to_account_info();
             let buyer_info = ctx.accounts.buyer.to_account_info();
-            
+
             require!(
-                **vault_info.lamports.borrow() >= payout,
+                **vault_info.lamports.borrow() >= payout_lamports,
                 ErrorCode::InsufficientVaultBalance
             );
 
-            **vault_info.try_borrow_mut_lamports()? -= payout;
-            **buyer_info.try_borrow_mut_lamports()? += payout;
+            **vault_info.try_borrow_mut_lamports()? -= payout_lamports;
+            **buyer_info.try_borrow_mut_lamports()? += payout_lamports;
         } else {
             policy.status = STATUS_SETTLED_OK;
             vault.total_active_exposure = vault
@@ -397,11 +543,17 @@ pub mod kestrel {
                 .saturating_sub(policy.premium_paid_lamports);
         }
 
-        policy.actual_slippage_bps = actual_slippage_bps;
+        policy.actual_slippage_bps = verified_slippage_i16;
+
+        msg!(
+            "Verified settlement: slippage={}bps payout={}",
+            verified_slippage_bps,
+            payout_lamports
+        );
 
         emit!(PolicySettled {
             policy: ctx.accounts.policy.key(),
-            actual_bps: actual_slippage_bps,
+            actual_bps: verified_slippage_i16,
             claimed,
         });
 
