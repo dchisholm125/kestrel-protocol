@@ -6,5 +6,5 @@ resolver = "2"
 lto = true
 codegen-units = 1
 opt-level = "z"
-strip = true
+strip = "symbols"
 overflow-checks = true

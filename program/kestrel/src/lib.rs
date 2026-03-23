@@ -7,36 +7,40 @@ declare_id!("46PW8Yrw8KNtgLcmBEW9GQPjaYQJUxJSxM8KPBMJ5RMS");
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("Policy has already been settled")]
+    #[msg("Policy already settled")]
     PolicyAlreadySettled,
-    #[msg("Policy has already expired")]
+    #[msg("Policy expired")]
     PolicyExpired,
-    #[msg("Policy has not yet expired")]
+    #[msg("Policy not yet expired")]
     PolicyNotExpired,
-    #[msg("Only the vault authority can settle policies")]
+    #[msg("Unauthorized settler")]
     UnauthorizedSettler,
-    #[msg("Guaranteed slippage bps must be between 1 and 500")]
+    #[msg("Invalid slippage bps")]
     InvalidSlippageBps,
-    #[msg("Vault has insufficient lamports to pay this claim")]
+    #[msg("Insufficient vault balance")]
     InsufficientVaultBalance,
-    #[msg("Vault has insufficient free reserve for withdrawal")]
+    #[msg("Insufficient free reserve")]
     InsufficientFreeReserve,
-    #[msg("Vault has insufficient capacity for this policy")]
+    #[msg("Insufficient vault capacity")]
     InsufficientVaultCapacity,
-    #[msg("Sequence number does not match next vault sequence")]
+    #[msg("Invalid sequence number")]
     InvalidSequenceNumber,
-    #[msg("Buyer account does not match policy buyer")]
+    #[msg("Buyer mismatch")]
     BuyerMismatch,
-    #[msg("Vault account is already closed or invalid")]
+    #[msg("Vault already closed")]
     VaultAlreadyClosed,
-    #[msg("Unsupported token pair: only SOL/USDC is currently supported")]
+    #[msg("Unsupported token pair")]
     UnsupportedTokenPair,
-    #[msg("Pyth price feed unavailable")]
+    #[msg("Price unavailable")]
     PriceUnavailable,
-    #[msg("Pyth price data is too stale")]
+    #[msg("Price too stale")]
     PriceTooStale,
-    #[msg("Arithmetic overflow")]
+    #[msg("Overflow")]
     Overflow,
+    #[msg("Premium too low")]
+    PremiumTooLow,
+    #[msg("Vault has active exposure")]
+    VaultHasActiveExposure,
 }
 
 #[event]
@@ -63,6 +67,11 @@ pub struct PolicyExpired {
 pub struct ProfitWithdrawn {
     pub authority: Pubkey,
     pub amount_lamports: u64,
+}
+
+#[event]
+pub struct SettlerUpdated {
+    pub new_settler: Pubkey,
 }
 
 #[event]
@@ -218,7 +227,7 @@ pub struct SettlePolicy<'info> {
     #[account(mut)]
     pub buyer: UncheckedAccount<'info>,
     #[account(mut)]
-    pub signer: Signer<'info>,
+    pub settler: Signer<'info>,
     /// CHECK: Pyth SOL/USD push-oracle PriceUpdateV2 account.
     /// Owner is validated against PYTH_RECEIVER_PROGRAM_ID.
     /// Feed ID and staleness are validated in the instruction body.
@@ -262,6 +271,18 @@ pub struct WithdrawProfit<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateSettlerAuthority<'info> {
+    #[account(
+        mut,
+        seeds = [GuaranteeVault::SEED_PREFIX.as_bytes()],
+        bump = vault.bump,
+        has_one = authority @ ErrorCode::UnauthorizedSettler
+    )]
+    pub vault: Account<'info, GuaranteeVault>,
+    pub authority: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -311,13 +332,13 @@ pub mod kestrel {
         let vault_balance = ctx.accounts.vault.to_account_info().lamports();
         let max_allowed_exposure = vault_balance
             .checked_mul(MAX_EXPOSURE_BPS)
-            .unwrap()
+            .ok_or(error!(ErrorCode::Overflow))?
             .checked_div(10_000)
-            .unwrap();
+            .ok_or(error!(ErrorCode::Overflow))?;
         let new_exposure = ctx.accounts.vault
             .total_active_exposure
             .checked_add(premium_lamports)
-            .unwrap();
+            .ok_or(error!(ErrorCode::Overflow))?;
         require!(
             new_exposure <= max_allowed_exposure,
             ErrorCode::InsufficientVaultCapacity
@@ -394,9 +415,9 @@ pub mod kestrel {
             ErrorCode::BuyerMismatch
         );
 
-        // Allow either the buyer OR the designated settler authority to sign settlement
+        // Only the designated settler authority may sign settlement
         require!(
-            ctx.accounts.signer.key() == policy.buyer || ctx.accounts.signer.key() == vault.settler_authority,
+            ctx.accounts.settler.key() == vault.settler_authority,
             ErrorCode::UnauthorizedSettler
         );
         require!(
@@ -464,17 +485,58 @@ pub mod kestrel {
                 .map_err(|_| error!(ErrorCode::PriceUnavailable))?,
         );
 
-        msg!("Pyth price: {} exp: {} publish_time: {} now: {}", price, price_exponent, publish_time, now);
-
         let price_age = now
             .checked_sub(publish_time)
             .ok_or(error!(ErrorCode::PriceTooStale))?;
         require!(price_age <= MAX_PRICE_AGE_SECONDS, ErrorCode::PriceTooStale);
 
         require!(price > 0, ErrorCode::PriceUnavailable);
-        let sol_price_usd = (price as f64) * 10f64.powi(price_exponent);
-        require!(sol_price_usd > 0.0, ErrorCode::PriceUnavailable);
-        let sol_price_usd_cents = (sol_price_usd * 100.0).round() as u64;
+        // Integer-only price conversion — no f64.
+        // sol_price_usd_cents = price * 100 / 10^(-exponent)
+        // For SOL/USD exponent is always -8; fast path avoids the general pow.
+        let sol_price_usd_cents: u64 = if price_exponent == -8 {
+            // price / 10^6  (= price * 100 / 10^8)
+            (price as u64)
+                .checked_div(1_000_000)
+                .ok_or(error!(ErrorCode::PriceUnavailable))?
+        } else if price_exponent < 0 {
+            // general negative exponent: price * 100 / 10^(-exponent)
+            let exp_mag = (-price_exponent) as u32;
+            let divisor = 10u64
+                .checked_pow(exp_mag.saturating_sub(2))
+                .ok_or(error!(ErrorCode::Overflow))?;
+            (price as u64)
+                .checked_div(divisor)
+                .ok_or(error!(ErrorCode::PriceUnavailable))?
+        } else {
+            // positive exponent (unusual): price * 100 * 10^exponent
+            let multiplier = 10u64
+                .checked_pow(price_exponent as u32)
+                .ok_or(error!(ErrorCode::Overflow))?;
+            (price as u64)
+                .checked_mul(multiplier)
+                .ok_or(error!(ErrorCode::Overflow))?
+                .checked_mul(100)
+                .ok_or(error!(ErrorCode::Overflow))?
+        };
+        require!(sol_price_usd_cents > 0, ErrorCode::PriceUnavailable);
+
+        // Enforce minimum premium: at least 1 bps of swap size at current oracle price
+        // min_premium_lamports = swap_size_usd_cents * 1e9 / (sol_price_usd_cents * 10_000)
+        let min_premium_lamports = policy
+            .swap_size_usd_cents
+            .checked_mul(1_000_000_000)
+            .ok_or(error!(ErrorCode::Overflow))?
+            .checked_div(
+                sol_price_usd_cents
+                    .checked_mul(10_000)
+                    .ok_or(error!(ErrorCode::Overflow))?,
+            )
+            .ok_or(error!(ErrorCode::Overflow))?;
+        require!(
+            policy.premium_paid_lamports >= min_premium_lamports,
+            ErrorCode::PremiumTooLow
+        );
 
         let expected_output_micro = policy
             .swap_size_usd_cents
@@ -544,12 +606,6 @@ pub mod kestrel {
         }
 
         policy.actual_slippage_bps = verified_slippage_i16;
-
-        msg!(
-            "Verified settlement: slippage={}bps payout={}",
-            verified_slippage_bps,
-            payout_lamports
-        );
 
         emit!(PolicySettled {
             policy: ctx.accounts.policy.key(),
@@ -632,6 +688,12 @@ pub mod kestrel {
         Ok(())
     }
 
+    pub fn update_settler_authority(ctx: Context<UpdateSettlerAuthority>, new_settler: Pubkey) -> Result<()> {
+        ctx.accounts.vault.settler_authority = new_settler;
+        emit!(SettlerUpdated { new_settler });
+        Ok(())
+    }
+
     pub fn close_vault(ctx: Context<CloseVault>) -> Result<()> {
         let vault_info = ctx.accounts.vault.to_account_info();
         let authority_info = ctx.accounts.authority.to_account_info();
@@ -656,6 +718,11 @@ pub mod kestrel {
                 .map_err(|_| error!(ErrorCode::VaultAlreadyClosed))?;
             u64::from_le_bytes(exposure_bytes)
         };
+
+        require!(
+            legacy_active_exposure == 0,
+            ErrorCode::VaultHasActiveExposure
+        );
 
         let lamports_returned = vault_info.lamports();
         **authority_info.try_borrow_mut_lamports()? += lamports_returned;
